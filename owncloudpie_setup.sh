@@ -260,6 +260,7 @@ function main_newinstall_nginx_mysql()
   apt-get autoremove -y
 
 	# setup mysql
+  printMsg "Please enter your newly created MySQL root password below."
   mysql -u root -p -e "CREATE DATABASE owncloud;GRANT ALL ON owncloud.* to 'owncloud'@'localhost' IDENTIFIED BY 'database_password';"
 
 	# set memory split to 240 MB RAM and 16 MB video
