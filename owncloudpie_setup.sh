@@ -238,6 +238,77 @@ function main_newinstall_nginx()
   dialog --backtitle "PetRockBlock.com - OwncloudPie Setup." --msgbox "If everything went right, Owncloud should now be available at the URL https://$myipaddress/owncloud. You have to finish the setup by visiting that site." 20 60    
 }
 
+function main_newinstall_nginx_mysql()
+{
+	clear 
+
+	# make sure we use the newest packages
+	apt-get update
+	apt-get upgrade -y
+
+  locale-gen en_US.UTF-8
+
+	# make sure that the group www-data exists
+	groupadd www-data
+	usermod -a -G www-data www-data
+
+	# install all needed packages, e.g., Nginx, PHP, SQLite
+  apt-get install -y nginx sendmail sendmail-bin openssl ssl-cert php5-cli php5-mysql php5-gd php5-curl \
+                      php5-common php5-cgi mysql-server php-pear php-apc git-core \
+                      autoconf automake autotools-dev curl libapr1 libtool curl libcurl4-openssl-dev \
+                      php-xml-parser php5 php5-dev php5-gd php5-fpm memcached php5-memcache varnish dphys-swapfile bzip2
+  apt-get autoremove -y
+
+	# setup mysql
+  mysql -u root -p -e "CREATE DATABASE owncloud;GRANT ALL ON owncloud.* to 'owncloud'@'localhost' IDENTIFIED BY 'database_password';"
+
+	# set memory split to 240 MB RAM and 16 MB video
+  ensureKeyValueShort "gpu_mem" "16" "/boot/config.txt"
+
+	# generate self-signed certificate that is valid for one year
+  installCertificateNginx
+
+	writeServerConfig
+	sed /etc/php5/fpm/pool.d/www.conf -i -e "s|listen = /var/run/php5-fpm.sock|listen = 127.0.0.1:9000|g"
+
+  ensureKeyValue "upload_max_filesize" "1000M" "/etc/php5/fpm/php.ini"
+  ensureKeyValue "post_max_size" "1000M" "/etc/php5/fpm/php.ini"
+  ensureKeyValue "default_charset" "UTF-8" "/etc/php5/fpm/php.ini"
+
+  ensureKeyValue "upload_tmp_dir" "/srv/http/owncloud/data" "/etc/php5/fpm/php.ini"
+  mkdir -p /srv/http/owncloud/data
+  chown www-data:www-data /srv/http/owncloud/data
+
+  sed /etc/nginx/sites-available/default -i -e "s|client_max_body_size [0-9]*[M]?;|client_max_body_size 1000M;|g"
+
+	/etc/init.d/php5-fpm restart
+	/etc/init.d/nginx restart
+
+	# set ARM frequency to 800 MHz (or use the raspi-config tool to set clock speed)
+  ensureKeyValueShort "arm_freq" "800" "/boot/config.txt"
+  ensureKeyValueShort "sdram_freq" "400" "/boot/config.txt"
+  ensureKeyValueShort "core_freq" "250" "/boot/config.txt"
+
+	# resize swap file to 512 MB
+  ensureKeyValueShort "CONF_SWAPSIZE" "512" "/etc/dphys-swapfile"
+	dphys-swapfile setup
+	dphys-swapfile swapon
+
+  mkdir -p /var/www/owncloud
+  downloadLatestOwncloudRelease
+	mv owncloud/ /var/www/
+
+	# change group and owner of all /var/www files recursively to www-data
+	chown -R www-data:www-data /var/www
+
+  # enable US UTF-8 locale
+  sudo sed -i -e "s/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/g" /etc/locale.gen
+
+	# finish the script
+	myipaddress=$(hostname -I | tr -d ' ')
+  dialog --backtitle "PetRockBlock.com - OwncloudPie Setup." --msgbox "If everything went right, Owncloud should now be available at the URL https://$myipaddress/owncloud. You have to finish the setup by visiting that site." 20 60    
+}
+
 function installCertificateApache()
 {  
   dialog --backtitle "PetRockBlock.com - OwncloudPie Setup." --msgbox "We are now going to create a self-signed certificate. While you could simply press ENTER when you are asked for country name etc. or enter whatever you want, it might be beneficial to have the web servers host name in the common name field of the certificate." 20 60    
@@ -360,7 +431,8 @@ function main_uninstall()
     apt-get remove -y nginx sendmail sendmail-bin openssl ssl-cert php5-cli php5-sqlite php5-gd php5-curl \
                       apache2 php5-common php5-cgi sqlite php-pear php-apc git-core \
                       autoconf automake autotools-dev curl libapr1 libtool curl libcurl4-openssl-dev \
-                      php-xml-parser php5 php5-dev php5-gd php5-fpm memcached php5-memcache varnish dphys-swapfile bzip2
+                      php-xml-parser php5 php5-dev php5-gd php5-fpm memcached php5-memcache varnish dphys-swapfile bzip2 \
+                      mysql-server php5-mysql
     apt-get -y autoremove 
     ;;
    *)
@@ -388,23 +460,25 @@ while true; do
     cmd=(dialog --backtitle "PetRockBlock.com - OwncloudPie Setup." --menu "You MUST set the server URL (e.g., 192.168.0.10 or myaddress.dyndns.org) before starting one of the installation routines. Choose task:" 22 76 16)
     options=(1 "Set server URL ($__servername)"
              2 "New installation, NGiNX based"
-             3 "Generate new SSL certificate for NGiNX"
-             4 "New installation, Apache based"
-             5 "Generate new SSL certificate for Apache"
-             6 "Update existing Owncloud installation"
-             7 "Update OwncloudPie script"
-             8 "Uninstall OwncloudPie")
+             3 "New installation, NGiNX based with MySQL"
+             4 "Generate new SSL certificate for NGiNX"
+             5 "New installation, Apache based"
+             6 "Generate new SSL certificate for Apache"
+             7 "Update existing Owncloud installation"
+             8 "Update OwncloudPie script"
+             9 "Uninstall OwncloudPie")
     choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)    
     if [ "$choice" != "" ]; then
         case $choice in
             1) main_setservername ;;
             2) main_newinstall_nginx ;;
-            3) installCertificateNginx ;;
-            4) main_newinstall_apache ;;
-            5) installCertificateApache ;;
-            6) main_update ;;
-            7) main_updatescript ;;
-            8) main_uninstall ;;
+            3) main_newinstall_nginx_mysql ;;
+            4) installCertificateNginx ;;
+            5) main_newinstall_apache ;;
+            6) installCertificateApache ;;
+            7) main_update ;;
+            8) main_updatescript ;;
+            9) main_uninstall ;;
         esac
     else
         break
